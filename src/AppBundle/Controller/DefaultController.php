@@ -3,6 +3,7 @@
 namespace AppBundle\Controller;
 
 use Symfony\Bundle\FrameworkBundle\Controller\Controller;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Annotation\Route;
 
@@ -30,7 +31,6 @@ class DefaultController extends Controller
      */
     public function getAction(Request $request)
     {
-
         $brands = $this->getDoctrine()
             ->getRepository(Brand::class)
             ->findAll();
@@ -39,15 +39,17 @@ class DefaultController extends Controller
             ->getRepository(GrossMerchandiseValue::class)
             ->findAll();
 
+        $result = CsvExporterManager::getCsv($brands, $gmvs);
 
-        $response = CsvExporterManager::getCsv($brands, $gmvs);
+        if($result){
+            $response = 'success';
+        } else {
+            $response = 'failed';
+        }
 
-        die();
-
-        // replace this example code with whatever you need
-        return $this->render('default/index.html.twig', [
-            'base_dir' => realpath($this->getParameter('kernel.project_dir')).DIRECTORY_SEPARATOR,
-        ]);
+        return new Response(
+            '<html><body>' . $response . '</body></html>'
+        );
     }
     
 }
