@@ -3,6 +3,8 @@ namespace AppBundle\Manager;
 
 use Doctrine\ORM\EntityManager;
 use League\Csv\Writer;
+use Money\Currency;
+use Money\Money;
 
 
 class CsvExporterManager
@@ -17,18 +19,56 @@ class CsvExporterManager
 
     public static function getCsv($brands, $gmvs)
     {
+        $brandNames = CsvExporterManager::getFirstRow($brands);
+        $dayGmv = CsvExporterManager::getGmvPerDay($gmvs);
+        $brandGmv = CsvExporterManager::getGmvPerBrand($brands);
 
-        $brandGmvArray = CsvExporterManager::getGmvPerBrand($brands);
-        $dayGmvArray = CsvExporterManager::getGmvPerDay($gmvs);
-        $fullData = array_merge($brandGmvArray, $dayGmvArray);
+        CsvExporterManager::generateCsv($brandNames, $brandGmv, $dayGmv);
+    }
 
-        $file = 'result.csv';
-        $csv = Writer::createFromPath($file);
-        $csv->insertOne(['1st May 2018 - 7th May 2018', 'Total GMV']);
-        $csv->insertAll($fullData);
-        $csv->output($file);
 
-        die;
+    private static function getFirstRow($brands)
+    {
+        $brandNames = array('');
+
+        foreach ($brands as $brand) {
+            $brandName = $brand->getName();
+            array_push($brandNames, $brandName);
+        }
+        array_push($brandNames, 'Total');
+
+        return $brandNames;
+    }
+
+    private static function getGmvPerDay($gmvs)
+    {
+
+        $dayGmvArray = array();
+
+        // Loop through each gmv
+        foreach ($gmvs as $gmv) {
+
+            $gmvDate = $gmv->getDate()->format('Y-m-d');
+            $gmvBrandId = $gmv->getBrandId();
+            $gmvValue = $gmv->getTurnover() * 100;
+
+            $dayGmvArray[$gmvDate][0] = $gmvDate;
+            $dayGmvArray[$gmvDate][$gmvBrandId] = number_format(($gmvValue / 100), 2, ',', '');
+
+            if (!isset($dayGmvArray[$gmvDate])) {
+                // Date key not set
+                // First turnover
+                $dayGmvArray[$gmvDate][999] = $gmvValue / 100;
+
+            } else {
+                // Date key set
+                // Add turnover
+                $dayGmvArray[$gmvDate][999] += $gmvValue / 100;
+            }
+
+        }
+
+        return $dayGmvArray;
     }
 
     private static function getGmvPerBrand($brands)
@@ -47,70 +87,32 @@ class CsvExporterManager
             //Loop through all gross merch values
             foreach ($brandGmvs as $brandGmv) {
 
+                $gmvValue = $brandGmv->getTurnover() * 100;
+
                 //Check if the gmv is between 1st of May and 5th of May
                 $isWithinPeriod = CsvExporterManager::isWithinPeriod($brandGmv);
 
                 if ($isWithinPeriod) {
                     // Add all the turnover values per brand
-                    $brandGmvTotal = $brandGmvTotal + (float)$brandGmv->getTurnover();
+                    $brandGmvTotal = $brandGmvTotal + $gmvValue;
                 }
             }
 
             // Store brand and total turnover
-            array_push($brandGmvArray, array(
-                'base' => $brand->getName(),
-                'total' => "€ " . round($brandGmvTotal, 2)
-            ));
-
-            $valueExcVat = (float)($brandGmvTotal * 0.21);
-
-            // Store brand and total turnover excluding VAT
-            array_push($brandGmvExcVatArray, array(
-                'base' => $brand->getName() . " (exc vat)",
-                'total' => "€ " . round(($brandGmvTotal - $valueExcVat), 2)
-            ));
+            $brandGmvArray[$brand->getId()] = number_format($brandGmvTotal / 100, 2, ',', '');
+            $valueExcVat = ($brandGmvTotal / 100) * 0.21;
+            $brandGmvExcVatArray[$brand->getId() . " (exc vat)"] = number_format((($brandGmvTotal / 100) - $valueExcVat), 2, ',', '');
         }
 
-        $result = array_merge($brandGmvArray, $brandGmvExcVatArray);
+        array_unshift($brandGmvArray, 'Total');
+        $brandGmvArray[99999] = '';
+        array_unshift($brandGmvExcVatArray, 'Total (exc vat)');
+        $brandGmvExcVatArray[99999] = '';
+
+        $result = array($brandGmvArray, $brandGmvExcVatArray);
 
         return $result;
 
-    }
-
-    private static function getGmvPerDay($gmvs)
-    {
-
-        $dayGmvArray = array();
-
-        // Loop through each brand
-        foreach ($gmvs as $gmv) {
-
-            //Check if the gmv is between 1st of May and 5th of May
-            $isWithinPeriod = CsvExporterManager::isWithinPeriod($gmv);
-            $gmvDate = $gmv->getDate()->format('Y-m-d');
-
-            if ($isWithinPeriod) {
-                if (isset($dayGmvArray[$gmvDate])) {
-                    // date key is already set. Add turnover
-                    $dayGmvArray[$gmvDate] += (float)$gmv->getTurnover();
-                } else {
-                    // date key is not yet set. Create it and add first turnover
-                    $dayGmvArray[$gmvDate] = (float)$gmv->getTurnover();
-                }
-            }
-        }
-
-        $result = array();
-
-        // Modify array so it has the same structure as turnover per brand so they can be merged
-        foreach ($dayGmvArray as $key => $value) {
-            array_push($result, array(
-                'base' => $key,
-                'total' => "€ " . round($value, 2)
-            ));
-        }
-
-        return $result;
     }
 
     private static function isWithinPeriod($gmv)
@@ -125,6 +127,33 @@ class CsvExporterManager
         $result = (($gmvDateObject >= $dateBegin) && ($gmvDateObject <= $dateEnd));
 
         return $result;
+    }
+
+    private static function generateCsv($firstRow, $brandGmv, $dayGmv)
+    {
+        // Create the CSV file
+        $file = 'result.csv';
+        $csv = Writer::createFromPath($file);
+
+        // Insert first row
+        $csv->insertOne($firstRow);
+
+        // Insert each day rows
+        ksort($dayGmv);
+        foreach ($dayGmv as $key => $value) {
+            ksort($value);
+            $csv->insertOne($value);
+        }
+
+        // Insert each companies totals rows
+        foreach ($brandGmv as $key => $value) {
+            ksort($value);
+            $csv->insertOne($value);
+        }
+
+        // generate file
+        $csv->output($file);
+        die;
     }
 
 }

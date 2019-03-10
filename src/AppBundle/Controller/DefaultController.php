@@ -35,9 +35,20 @@ class DefaultController extends Controller
             ->getRepository(Brand::class)
             ->findAll();
 
-        $gmvs = $this->getDoctrine()
-            ->getRepository(GrossMerchandiseValue::class)
-            ->findAll();
+        $from = new \DateTime('2018-05-01 00:00:00');
+        $to   = new \DateTime('2018-05-07 23:59:59');
+
+        $repository = $this->getDoctrine()
+            ->getRepository(GrossMerchandiseValue::class);
+
+        $query = $repository->createQueryBuilder('gmv')
+            ->where('gmv.date BETWEEN :from AND :to')
+            ->setParameter('from', $from)
+            ->setParameter('to', $to )
+            ->orderBy('gmv.brand_id', 'ASC')
+            ->getQuery();
+
+        $gmvs = $query->getResult();
 
         $result = CsvExporterManager::getCsv($brands, $gmvs);
 
